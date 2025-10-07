@@ -45,3 +45,6 @@ echo ".env" >> .gitignore
 ".env" 
 "backend/.env" 
 "backend/.env.example" 
+".env" 
+"backend/.env" 
+"backend/.env.example" 
