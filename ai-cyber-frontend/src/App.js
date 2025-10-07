@@ -1,11 +1,43 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
+import "./index.css";
 
 const API_BASE = "http://127.0.0.1:8000";
 
-function App() {
+// Small SVG PieChart component
+function PieChart({ values = [], size = 160, inner = 60, colors = ["#27ae60", "#e74c3c"] }) {
+  const total = values.reduce((s, v) => s + v, 0) || 1;
+  let angle = -90;
+  const segments = values.map((v, i) => {
+    const portion = (v / total) * 360;
+    const start = angle;
+    const end = angle + portion;
+    angle = end;
+    const large = portion > 180 ? 1 : 0;
+    const r = size / 2;
+    const rad = Math.PI / 180;
+    const x1 = r + r * Math.cos(start * rad);
+    const y1 = r + r * Math.sin(start * rad);
+    const x2 = r + r * Math.cos(end * rad);
+    const y2 = r + r * Math.sin(end * rad);
+    const d = `M ${r} ${r} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
+    return { d, color: colors[i % colors.length], key: i };
+  });
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="pie-chart" aria-hidden>
+      {segments.map((s) => (
+        <path key={s.key} d={s.d} fill={s.color} stroke={s.color} strokeWidth="0.2" />
+      ))}
+      <circle cx={size / 2} cy={size / 2} r={inner} fill="var(--panel)" />
+    </svg>
+  );
+}
+
+export default function App() {
+  // Inputs & results
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [url, setURL] = useState("");
@@ -17,254 +49,269 @@ function App() {
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [emailResult, setEmailResult] = useState("");
-  const [history, setHistory] = useState([]);
-  const [threats, setThreats] = useState([]);
-  const [darkMode, setDarkMode] = useState(false);
-  const [showWelcome, setShowWelcome] = useState(true);
 
-  useEffect(() => { 
-    fetchHistory(); 
-    fetchThreats(); 
-    const timer = setTimeout(() => setShowWelcome(false), 3000); // hide welcome after 3 sec
-    return () => clearTimeout(timer);
+  // Dashboard & UI
+  const [darkMode, setDarkMode] = useState(false);
+  const [active, setActive] = useState("Dashboard");
+  const [showWelcome, setShowWelcome] = useState(true);
+  const [threats, setThreats] = useState([]);
+  const [sessionScans, setSessionScans] = useState([]);
+
+  // Stats
+  const stats = useMemo(() => {
+    const s = { total: sessionScans.length, risky: 0, safe: 0 };
+    sessionScans.forEach((scan) => {
+      const txt = ((scan.result || "") + " " + (scan.risk || "")).toLowerCase();
+      if (txt.includes("high") || txt.includes("malware") || txt.includes("phish") || txt.includes("danger")) s.risky++;
+      else s.safe++;
+    });
+    return s;
+  }, [sessionScans]);
+
+  useEffect(() => {
+    document.body.classList.toggle("dark-mode", darkMode);
+    document.body.classList.toggle("light-mode", !darkMode);
+  }, [darkMode]);
+
+  useEffect(() => {
+    fetchThreats();
+    fetchSession();
+    const welcomeTimer = setTimeout(() => setShowWelcome(false), 1800);
+    const threatInterval = setInterval(fetchThreats, 30000); // auto-refresh every 30s
+    return () => {
+      clearTimeout(welcomeTimer);
+      clearInterval(threatInterval);
+    };
   }, []);
 
-  const ask = async () => {
-    if (!question.trim()) return;
-    setAnswer("⏳ Thinking...");
-    try {
-      const res = await axios.post(`${API_BASE}/ask`, { question });
-      setAnswer(res.data.answer || JSON.stringify(res.data));
-      fetchHistory();
-    } catch { setAnswer("⚠️ Error connecting to backend"); }
+  const getRiskColor = (text) =>
+    text?.toLowerCase().includes("high")
+      ? "#e74c3c"
+      : text?.toLowerCase().includes("medium")
+      ? "#f39c12"
+      : "#27ae60";
+
+  const markdownComponents = {
+    h1: ({ children }) => <h1 style={{ fontSize: 20 }}>{children}</h1>,
+    h2: ({ children }) => <h2 style={{ fontSize: 18 }}>{children}</h2>,
+    a: ({ children, ...props }) => (
+      <a {...props} style={{ color: darkMode ? "#7afcff" : "#0b63ff" }} target="_blank" rel="noreferrer">
+        {children}
+      </a>
+    ),
   };
 
-  const analyzeURL = async () => {
-    if (!url.trim()) return;
-    setURLResult("⏳ Analyzing...");
+  // API calls
+  const handleAPICall = async (endpoint, payloadSetter, payload) => {
+    payloadSetter("⏳ Processing...");
     try {
-      const res = await axios.post(`${API_BASE}/analyze/url`, { url });
-      setURLResult(res.data.result || JSON.stringify(res.data));
-      fetchHistory();
-    } catch { setURLResult("⚠️ Error connecting to backend"); }
+      const res = await axios.post(`${API_BASE}/${endpoint}`, payload);
+      const result = res.data.result || res.data.answer || JSON.stringify(res.data);
+      payloadSetter(result);
+      setSessionScans((prev) => [...prev, { result, type: endpoint }]);
+    } catch {
+      payloadSetter("⚠️ Backend error");
+    }
   };
 
-  const analyzeSMS = async () => {
-    if (!sms.trim()) return;
-    setSMSResult("⏳ Analyzing...");
-    try {
-      const res = await axios.post(`${API_BASE}/analyze/sms`, { message: sms });
-      setSMSResult(res.data.result || JSON.stringify(res.data));
-      fetchHistory();
-    } catch { setSMSResult("⚠️ Error connecting to backend"); }
-  };
-
+  const ask = () => handleAPICall("ask", setAnswer, { question });
+  const analyzeURL = () => handleAPICall("analyze/url", setURLResult, { url });
+  const analyzeSMS = () => handleAPICall("analyze/sms", setSMSResult, { message: sms });
+  const analyzeEmail = () => handleAPICall("analyze/email", setEmailResult, { subject: emailSubject, body: emailBody });
   const analyzeFile = async () => {
     if (!file) return;
-    setFileResult("⏳ Analyzing...");
+    setFileResult("⏳ Processing...");
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await axios.post(`${API_BASE}/analyze/file`, formData);
-      setFileResult(res.data.result || JSON.stringify(res.data));
-      fetchHistory();
-    } catch { setFileResult("⚠️ Error connecting to backend"); }
-  };
-
-  const analyzeEmail = async () => {
-    if (!emailSubject.trim() && !emailBody.trim()) return;
-    setEmailResult("⏳ Analyzing...");
-    try {
-      const res = await axios.post(`${API_BASE}/analyze/email`, { subject: emailSubject, body: emailBody });
-      setEmailResult(res.data.result || JSON.stringify(res.data));
-      fetchHistory();
-    } catch { setEmailResult("⚠️ Error connecting to backend"); }
-  };
-
-  const fetchHistory = async () => {
-    try {
-      const res = await axios.get(`${API_BASE}/history`);
-      setHistory(res.data.history ? res.data.history.slice().reverse() : []);
-    } catch { setHistory([]); }
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await axios.post(`${API_BASE}/analyze/file`, fd);
+      const result = res.data.result || JSON.stringify(res.data);
+      setFileResult(result);
+      setSessionScans((prev) => [...prev, { result, type: "file" }]);
+    } catch {
+      setFileResult("⚠️ Backend error");
+    }
   };
 
   const fetchThreats = async () => {
     try {
       const res = await axios.get(`${API_BASE}/threat-feed`);
       setThreats(res.data.feed || []);
-    } catch { setThreats([]); }
-  };
-
-  const getRiskColor = (text) => text.toLowerCase().includes("high") ? "#e74c3c" : text.toLowerCase().includes("medium") ? "#f39c12" : "#27ae60";
-
-  const cardStyle = {
-    padding: 16, 
-    borderRadius: 14, 
-    marginTop: 20, 
-    boxShadow: darkMode ? "0 2px 12px rgba(0,0,0,0.6)" : "0 2px 12px rgba(0,0,0,0.1)", 
-    transition: "all 0.3s ease"
-  };
-
-  const inputStyle = { padding: 10, width: "100%", borderRadius: 8, border: "1px solid #ccc", marginTop: 8 };
-
-  const resultCardStyle = (type) => {
-    let bg, border;
-    switch (type) {
-      case "QnA": bg = darkMode ? "#1a2a4a" : "#e8f1fc"; border = "#3498db"; break;
-      case "URL": bg = darkMode ? "#1a4a2a" : "#e8fcee"; border = "#27ae60"; break;
-      case "SMS": bg = darkMode ? "#4a2a1a" : "#fce8e0"; border = "#e67e22"; break;
-      case "File": bg = darkMode ? "#3a1a4a" : "#f0e8fc"; border = "#8e44ad"; break;
-      case "Email": bg = darkMode ? "#4a331a" : "#fcf0e8"; border = "#d35400"; break;
-      default: bg = darkMode ? "#3a3a3a" : "#f7f9fc"; border = "#ccc";
+    } catch {
+      setThreats([]);
     }
-    return {
-      padding: 14, 
-      marginBottom: 12, 
-      borderRadius: 12, 
-      background: bg, 
-      borderLeft: `5px solid ${border}`, 
-      lineHeight: 1.7, 
-      fontSize: 16,
-      transition: "all 0.3s ease",
-      cursor: "pointer",
-      boxShadow: darkMode ? "0 2px 12px rgba(0,0,0,0.5)" : "0 2px 8px rgba(0,0,0,0.1)"
-    };
   };
 
-  const markdownComponents = {
-    h1: ({node, children}) => <h1 style={{fontSize: 24, fontWeight: 700, margin: '12px 0'}}>{children}</h1>,
-    h2: ({node, children}) => <h2 style={{fontSize: 20, fontWeight: 600, margin: '10px 0'}}>{children}</h2>,
-    h3: ({node, children}) => <h3 style={{fontSize: 18, fontWeight: 600, margin: '8px 0'}}>{children}</h3>,
-    strong: ({node, ...props}) => <strong style={{color: darkMode ? "#ffd700" : "#2c3e50"}} {...props} />,
-    a: ({node, children, ...props}) => <a style={{color: "#1a73e8", textDecoration: 'underline'}} {...props} target="_blank" rel="noopener noreferrer">{children}</a>,
-    li: ({node, ...props}) => (
-      <motion.li initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }} style={{ marginBottom: 8, padding: 6, borderRadius: 6, background: darkMode ? "#4a4a4a" : "#e8f0fe", listStyleType: "none" }} {...props} />
-    ),
-    ul: ({node, ...props}) => <ul style={{ paddingLeft: 0, marginBottom: 12 }} {...props} />,
-    ol: ({node, ...props}) => <ol style={{ paddingLeft: 0, marginBottom: 12 }} {...props} />,
+  const fetchSession = async () => {
+    // Fetch saved session from backend if implemented
+    // Otherwise keep local
+    setSessionScans([]);
   };
+
+  const handleEnter = (e, fn) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      fn();
+    }
+  };
+
+  const panelHeader = (title, subtitle) => (
+    <div className="panel-header">
+      <div>
+        <h4>{title}</h4>
+        {subtitle && <small className="muted">{subtitle}</small>}
+      </div>
+    </div>
+  );
+
+  const fadeUp = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 8 }, transition: { duration: 0.28 } };
 
   return (
-    <div style={{ fontFamily: "Segoe UI, sans-serif", padding: 24, minHeight: "100vh", background: darkMode ? "#1e1e1e" : "#eef3fa", color: darkMode ? "#fff" : "#2c3e50", transition: "all 0.5s ease", position: "relative", overflow: "hidden" }}>
-      
-      {/* Animated Background */}
-      <div style={{
-        position: "absolute",
-        top:0, left:0, width:"100%", height:"100%", zIndex:0,
-        background: darkMode ? "linear-gradient(120deg, #0f2027, #203a43, #2c5364)" : "linear-gradient(120deg, #a1c4fd, #c2e9fb, #f0f9ff)",
-        backgroundSize: "400% 400%",
-        animation: "gradientBG 15s ease infinite"
-      }} />
-
-      {/* Welcome Overlay */}
-      {showWelcome && (
-        <motion.div initial={{opacity:1}} animate={{opacity:0}} transition={{duration:3}} style={{
-          position: "absolute", top:0, left:0, width:"100%", height:"100%", zIndex:2, display:"flex", justifyContent:"center", alignItems:"center", background: "rgba(0,0,0,0.7)", color:"#fff", fontSize:32, fontWeight:"bold"
-        }}>
-          Welcome to AI Cyber Assistant
-        </motion.div>
-      )}
-
-      <div style={{ position:"relative", zIndex:1, textAlign: "center", marginBottom: 24 }}>
-        <h1>🔐 AI Cyber Assistant</h1>
-        <button onClick={() => setDarkMode(!darkMode)} style={{ padding: "6px 12px", borderRadius: 6, cursor: "pointer", transition:"0.3s all" }}>
-          {darkMode ? "🌞 Light Mode" : "🌙 Dark Mode"}
-        </button>
-      </div>
-
-      <div style={{ maxWidth: 900, margin: "0 auto", position:"relative", zIndex:1 }}>
-        {/* QnA */}
-        <div style={{ ...cardStyle, background: darkMode ? "#2c2c2c" : "#fff" }}>
-          <h3>💡 Ask a Question</h3>
-          <textarea rows={3} style={inputStyle} value={question} onChange={e => setQuestion(e.target.value)} placeholder="Ask a cybersecurity question..." />
-          <button onClick={ask} style={{ marginTop: 10, padding: "10px 18px", background: "#3498db", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}>Ask</button>
-          {answer && <motion.div whileHover={{scale:1.02}} initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={resultCardStyle("QnA")}>
-            <ReactMarkdown components={markdownComponents}>{answer}</ReactMarkdown>
-          </motion.div>}
+    <div className="dashboard-wrap">
+      {/* Sidebar */}
+      <aside className="sidebar-glass" role="navigation" aria-label="Sidebar">
+        <div className="brand">
+          <span className="logo" aria-hidden>🔐</span>
+          <div>
+            <div className="brand-title">Cyber Assistant</div>
+            <div className="brand-sub">AI Security</div>
+          </div>
         </div>
 
-        {/* URL Analyzer */}
-        <div style={{ ...cardStyle, background: darkMode ? "#2c2c2c" : "#fff" }}>
-          <h3>🌐 URL Analyzer</h3>
-          <input style={inputStyle} value={url} onChange={e => setURL(e.target.value)} placeholder="https://example.com" />
-          <button onClick={analyzeURL} style={{ marginTop: 10, padding: "10px 18px", background: "#27ae60", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}>Analyze URL</button>
-          {urlResult && <motion.div whileHover={{scale:1.02}} initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={resultCardStyle("URL")}>
-            <ReactMarkdown components={markdownComponents}>{urlResult}</ReactMarkdown>
-          </motion.div>}
-        </div>
+        <nav className="sidebar-nav" aria-label="Main panels">
+          {["Dashboard", "QnA", "URL", "SMS", "File", "Email", "Threat Feed"].map((p) => (
+            <button key={p} className={`nav-btn ${active === p ? "active" : ""}`} onClick={() => setActive(p)} aria-pressed={active === p}>
+              {p}
+            </button>
+          ))}
+        </nav>
 
-        {/* SMS Analyzer */}
-        <div style={{ ...cardStyle, background: darkMode ? "#2c2c2c" : "#fff" }}>
-          <h3>📩 SMS Analyzer</h3>
-          <textarea rows={2} style={inputStyle} value={sms} onChange={e => setSMS(e.target.value)} placeholder="Enter suspicious SMS text..." />
-          <button onClick={analyzeSMS} style={{ marginTop: 10, padding: "10px 18px", background: "#e67e22", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}>Analyze SMS</button>
-          {smsResult && <motion.div whileHover={{scale:1.02}} initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={resultCardStyle("SMS")}>
-            <ReactMarkdown components={markdownComponents}>{smsResult}</ReactMarkdown>
-          </motion.div>}
-        </div>
+        <div className="sidebar-stats" aria-hidden={false}>
+          <div className="stat">
+            <div className="stat-title">Total</div>
+            <div className="stat-value">{stats.total}</div>
+          </div>
+          <div className="stat">
+            <div className="stat-title">Risky</div>
+            <div className="stat-value risky">{stats.risky}</div>
+          </div>
+          <div className="stat">
+            <div className="stat-title">Safe</div>
+            <div className="stat-value safe">{stats.safe}</div>
+          </div>
 
-        {/* File Analyzer */}
-        <div style={{ ...cardStyle, background: darkMode ? "#2c2c2c" : "#fff" }}>
-          <h3>📄 File Analyzer</h3>
-          <input type="file" onChange={e => setFile(e.target.files[0])} style={{ marginTop: 8 }} />
-          <button onClick={analyzeFile} style={{ marginTop: 10, padding: "10px 18px", background: "#8e44ad", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}>Analyze File</button>
-          {fileResult && <motion.div whileHover={{scale:1.02}} initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={resultCardStyle("File")}>
-            <ReactMarkdown components={markdownComponents}>{fileResult}</ReactMarkdown>
-          </motion.div>}
+          <div className="mode-row">
+            <button className="mode-btn" onClick={() => setDarkMode(!darkMode)} aria-label="Toggle theme">
+              {darkMode ? "🌞 Light" : "🌙 Dark"}
+            </button>
+          </div>
         </div>
+      </aside>
 
-        {/* Email Analyzer */}
-        <div style={{ ...cardStyle, background: darkMode ? "#2c2c2c" : "#fff" }}>
-          <h3>📧 Email Analyzer</h3>
-          <input style={inputStyle} value={emailSubject} onChange={e => setEmailSubject(e.target.value)} placeholder="Subject" />
-          <textarea rows={2} style={{ ...inputStyle, marginTop: 8 }} value={emailBody} onChange={e => setEmailBody(e.target.value)} placeholder="Email Body" />
-          <button onClick={analyzeEmail} style={{ marginTop: 10, padding: "10px 18px", background: "#d35400", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}>Analyze Email</button>
-          {emailResult && <motion.div whileHover={{scale:1.02}} initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={resultCardStyle("Email")}>
-            <ReactMarkdown components={markdownComponents}>{emailResult}</ReactMarkdown>
-          </motion.div>}
-        </div>
+      {/* Main content */}
+      <main className="main-area">
+        <AnimatePresence>{showWelcome && (
+          <motion.div {...fadeUp} className="welcome-card" key="welcome">
+            <h2>Welcome 👋</h2>
+            <p>AI Cyber Assistant — your security co-pilot</p>
+          </motion.div>
+        )}</AnimatePresence>
+
+        {/* Dashboard */}
+        {active === "Dashboard" && (
+          <section className="grid" aria-live="polite">
+            <motion.div {...fadeUp} className="card large glass">
+              {panelHeader("Overview")}
+              <div className="overview-grid">
+                <div className="overview-stats">
+                  <div className="tag">Total Scans: <span>{stats.total}</span></div>
+                  <div className="tag">Risky: <span className="risky">{stats.risky}</span></div>
+                  <div className="tag">Safe: <span className="safe">{stats.safe}</span></div>
+                </div>
+                <div className="overview-chart">
+                  <PieChart values={[stats.safe, stats.risky]} />
+                </div>
+              </div>
+            </motion.div>
+          </section>
+        )}
+
+        {/* QnA panel */}
+        {active === "QnA" && (
+          <section className="single-panel" aria-live="polite">
+            <motion.div {...fadeUp} className="card glass">
+              {panelHeader("Ask a Question")}
+              <textarea rows={4} placeholder="Ask a cybersecurity question..." value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => handleEnter(e, ask)} />
+              <div className="row"><button className="btn primary" disabled={!question.trim()} onClick={ask}>Ask</button></div>
+              {answer && <div className="result-block"><ReactMarkdown components={markdownComponents}>{answer}</ReactMarkdown></div>}
+            </motion.div>
+          </section>
+        )}
+
+        {/* URL, SMS, File, Email panels */}
+        {active === "URL" && (
+          <section className="single-panel" aria-live="polite">
+            <motion.div {...fadeUp} className="card glass">
+              {panelHeader("URL Analyzer")}
+              <input placeholder="https://example.com" value={url} onChange={e => setURL(e.target.value)} onKeyDown={e => handleEnter(e, analyzeURL)} />
+              <button className="btn success" disabled={!url.trim()} onClick={analyzeURL}>Analyze URL</button>
+              {urlResult && <div className="result-block"><ReactMarkdown components={markdownComponents}>{urlResult}</ReactMarkdown></div>}
+            </motion.div>
+          </section>
+        )}
+
+        {active === "SMS" && (
+          <section className="single-panel" aria-live="polite">
+            <motion.div {...fadeUp} className="card glass">
+              {panelHeader("SMS Analyzer")}
+              <textarea rows={3} placeholder="Enter suspicious SMS..." value={sms} onChange={e => setSMS(e.target.value)} onKeyDown={e => handleEnter(e, analyzeSMS)} />
+              <button className="btn warn" disabled={!sms.trim()} onClick={analyzeSMS}>Analyze SMS</button>
+              {smsResult && <div className="result-block"><ReactMarkdown components={markdownComponents}>{smsResult}</ReactMarkdown></div>}
+            </motion.div>
+          </section>
+        )}
+
+        {active === "File" && (
+          <section className="single-panel" aria-live="polite">
+            <motion.div {...fadeUp} className="card glass">
+              {panelHeader("File Analyzer")}
+              <input type="file" onChange={e => setFile(e.target.files[0])} />
+              <button className="btn purple" disabled={!file} onClick={analyzeFile}>Analyze File</button>
+              {fileResult && <div className="result-block"><ReactMarkdown components={markdownComponents}>{fileResult}</ReactMarkdown></div>}
+            </motion.div>
+          </section>
+        )}
+
+        {active === "Email" && (
+          <section className="single-panel" aria-live="polite">
+            <motion.div {...fadeUp} className="card glass">
+              {panelHeader("Email Analyzer")}
+              <input placeholder="Subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} onKeyDown={e => handleEnter(e, analyzeEmail)} />
+              <textarea rows={3} placeholder="Email body" value={emailBody} onChange={e => setEmailBody(e.target.value)} onKeyDown={e => handleEnter(e, analyzeEmail)} />
+              <button className="btn orange" disabled={!emailSubject.trim() && !emailBody.trim()} onClick={analyzeEmail}>Analyze Email</button>
+              {emailResult && <div className="result-block"><ReactMarkdown components={markdownComponents}>{emailResult}</ReactMarkdown></div>}
+            </motion.div>
+          </section>
+        )}
 
         {/* Threat Feed */}
-        <div style={{ ...cardStyle, background: darkMode ? "#2c2c2c" : "#fff" }}>
-          <h3>⚠️ Live Threat Feed</h3>
-          <div>
-            {threats.map((t, idx) => (
-              <motion.div key={idx} initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ padding: 10, marginBottom: 8, borderRadius: 8, background: getRiskColor(t.risk), color: "#fff" }}>
-                {t.title} ({t.risk})
-              </motion.div>
-            ))}
-          </div>
-        </div>
-
-        {/* History */}
-        <div style={{ ...cardStyle, background: darkMode ? "#2c2c2c" : "#fff" }}>
-          <h3>📜 History</h3>
-          <div style={{ maxHeight: 260, overflowY: "auto" }}>
-            {history.length === 0 && <p style={{ color: "#888" }}>No history yet...</p>}
-            {history.map((it, idx) => (
-              <motion.div key={idx} whileHover={{scale:1.02}} initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={resultCardStyle(it.type)}>
-                {it.type === "QnA" && <div><strong>❓ Q:</strong> {it.question}<br /><strong>✅ A:</strong><ReactMarkdown components={markdownComponents}>{it.answer}</ReactMarkdown></div>}
-                {it.type === "URL" && <div><strong>🌍 URL:</strong> {it.url}<br /><strong>🔎 Result:</strong><ReactMarkdown components={markdownComponents}>{it.result}</ReactMarkdown></div>}
-                {it.type === "SMS" && <div><strong>✉️ SMS:</strong> {it.message}<br /><strong>🔎 Result:</strong><ReactMarkdown components={markdownComponents}>{it.result}</ReactMarkdown></div>}
-                {it.type === "File" && <div><strong>📄 File:</strong> {it.filename}<br /><strong>🔎 Result:</strong><ReactMarkdown components={markdownComponents}>{it.result}</ReactMarkdown></div>}
-                {it.type === "Email" && <div><strong>📧 Email:</strong> {it.subject}<br /><strong>🔎 Result:</strong><ReactMarkdown components={markdownComponents}>{it.result}</ReactMarkdown></div>}
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <style>
-        {`
-          @keyframes gradientBG {
-            0% {background-position:0% 50%}
-            50% {background-position:100% 50%}
-            100% {background-position:0% 50%}
-          }
-        `}
-      </style>
+        {active === "Threat Feed" && (
+          <section className="single-panel" aria-live="polite">
+            <motion.div {...fadeUp} className="card glass">
+              {panelHeader("Live Threat Feed")}
+              <div className="scroll-container">
+                {threats.length === 0 ? <p className="muted">No threats right now</p> :
+                  threats.map((t, i) => (
+                    <div key={i} className="threat-card" style={{ background: getRiskColor(t.risk) }}>
+                      {t.title} <span className="muted">({t.risk})</span>
+                    </div>
+                  ))
+                }
+              </div>
+            </motion.div>
+          </section>
+        )}
+      </main>
     </div>
   );
 }
-
-export default App;
