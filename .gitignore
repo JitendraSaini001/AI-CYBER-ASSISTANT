@@ -41,3 +41,4 @@ Thumbs.db
 *.bak
 
 echo ".env" >> .gitignore
+"backend/venv/" 
