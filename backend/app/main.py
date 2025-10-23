@@ -8,6 +8,24 @@ from datetime import datetime
 from typing import Optional
 from io import BytesIO
 import csv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+origins = [
+    "http://localhost:3000",  # for local frontend testing
+    "https://ai-cyber-frontend.vercel.app"  # deployed frontend
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Query as FastAPIQuery
 from fastapi.middleware.cors import CORSMiddleware
