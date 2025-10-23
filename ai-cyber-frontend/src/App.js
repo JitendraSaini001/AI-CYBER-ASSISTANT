@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import "./index.css";
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "https://ai-cyber-assistant-1.onrender.com/";
 
 // Small SVG PieChart component
 function PieChart({ values = [], size = 160, inner = 60, colors = ["#27ae60", "#e74c3c"] }) {
