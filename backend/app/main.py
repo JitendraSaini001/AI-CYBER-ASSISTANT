@@ -8,24 +8,6 @@ from datetime import datetime
 from typing import Optional
 from io import BytesIO
 import csv
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
-
-origins = [
-    "http://localhost:3000",  # for local frontend testing
-    "https://ai-cyber-frontend.vercel.app"  # deployed frontend
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Query as FastAPIQuery
 from fastapi.middleware.cors import CORSMiddleware
@@ -339,3 +321,10 @@ def download_report():
         writer.writerow([s.get("type"), details, s.get("result"), s.get("time")])
     output.seek(0)
     return StreamingResponse(output, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=scan_history.csv"})
+
+
+# Run with: python -m app.main  (useful for local testing)
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, log_level="info")
