@@ -8,8 +8,8 @@ import Disclaimer from './pages/Disclaimer';
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-
-
+// API base URL: uses env variable in production (Netlify), falls back to localhost in dev
+const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 
 
@@ -153,7 +153,7 @@ const handleScanURL = async (value = null) => {
   setUrlLoading(true);
   setUrlResult(null);
   try {
-    const res = await fetch("http://localhost:5000/api/scan/url", {
+    const res = await fetch(`${API_BASE}/api/scan/url`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
@@ -179,7 +179,7 @@ const handleScanFile = async (f = null) => {
   try {
     const formData = new FormData();
     formData.append("file", fileToScan);
-    const res = await fetch("http://localhost:5000/api/scan/file", {
+    const res = await fetch(`${API_BASE}/api/scan/file`, {
       method: "POST",
       body: formData,
     });
@@ -203,7 +203,7 @@ const handleScanEmail = async () => {
   setEmailLoading(true);
   setEmailResult(null);
   try {
-    const res = await fetch("http://localhost:5000/api/scan/email", {
+    const res = await fetch(`${API_BASE}/api/scan/email`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subject, body }),
@@ -233,7 +233,7 @@ const handleScanIP = async (value = null) => {
   setIpLoading(true);
   setIpResult(null);
   try {
-    const res = await fetch("http://localhost:5000/api/scan/ip", {
+    const res = await fetch(`${API_BASE}/api/scan/ip`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ip }),
@@ -990,7 +990,7 @@ function AssistantWidget({ context }) {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:5000/api/assistant", {
+      const res = await fetch(`${API_BASE}/api/assistant`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: userMsg, context }),
@@ -1067,3 +1067,7 @@ function AssistantWidget({ context }) {
     </div>
   );
 }
+
+
+
+
